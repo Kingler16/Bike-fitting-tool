@@ -70,8 +70,8 @@ python bike_fit_analyzer.py
 
 2. Position your computer so you can see yourself from the side
 3. Press **SPACEBAR** to start the measurement process
-4. You have **5 seconds** to get on your bike
-5. Pedal normally for **5 seconds** while the system measures
+4. You have **15 seconds** to get on your bike
+5. Pedal normally for **8 seconds** while the system measures
 6. After measurement, the maximum angle is locked and displayed with color-coded feedback
 
 ### Measurement Process
