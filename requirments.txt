@@ -1,0 +1,17 @@
+# Bike Fit Analyzer - Requirements
+# Python 3.8+ recommended
+
+# Computer Vision and Image Processing
+opencv-python==4.9.0.80
+
+# Pose Detection Wrapper
+cvzone==1.6.1
+
+# MediaPipe for Pose Estimation (required by cvzone)
+mediapipe==0.10.9
+
+# Numerical calculations
+numpy==1.24.3
+
+# Optional but recommended for MacOS (better camera compatibility)
+# opencv-contrib-python==4.9.0.80
