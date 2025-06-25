@@ -36,16 +36,21 @@ class BikeFitAnalyzer:
         # Variables for angle calculation
         self.max_angle = 0
         self.current_angle = 0
+        self.angle_history = []  # Store angle history for graph
+        self.max_history_points = 150  # About 5 seconds at 30fps
 
         # Optimal angle range (can be adjusted)
         self.optimal_angle_min = 140
         self.optimal_angle_max = 150
 
-        # Colors for visualization (BGR format)
-        self.color_optimal = (0, 255, 0)  # Green
-        self.color_too_low = (0, 165, 255)  # Orange
-        self.color_too_high = (0, 0, 255)  # Red
-        self.color_neutral = (255, 255, 255)  # White
+        # Modern color palette
+        self.color_primary = (255, 195, 0)  # Cyan/Blue
+        self.color_success = (0, 255, 150)  # Green
+        self.color_warning = (0, 140, 255)  # Orange
+        self.color_danger = (100, 100, 255)  # Red
+        self.color_dark = (40, 40, 40)  # Dark gray
+        self.color_light = (250, 250, 250)  # Almost white
+        self.color_mid = (180, 180, 180)  # Mid gray
 
         # Timer and measurement state variables
         self.state = "idle"  # States: idle, countdown, measuring, finished
@@ -53,6 +58,10 @@ class BikeFitAnalyzer:
         self.measurement_start = None
         self.countdown_duration = 5  # seconds
         self.measurement_duration = 5  # seconds
+
+        # UI Layout constants
+        self.ui_margin = 30
+        self.card_radius = 15
 
     def calculate_angle(self, p1, p2, p3):
         """
@@ -79,61 +88,316 @@ class BikeFitAnalyzer:
         Provide feedback based on measured angle
         """
         if angle < self.optimal_angle_min:
-            return "Saddle too low - please raise", self.color_too_low
+            return "RAISE SADDLE", "Too Low", self.color_warning
         elif angle > self.optimal_angle_max:
-            return "Saddle too high - please lower", self.color_too_high
+            return "LOWER SADDLE", "Too High", self.color_danger
         else:
-            return "Saddle height optimal", self.color_optimal
+            return "OPTIMAL", "Perfect Height", self.color_success
+
+    def draw_rounded_rect(self, img, pt1, pt2, color, thickness, radius):
+        """
+        Draw a rounded rectangle
+        """
+        x1, y1 = pt1
+        x2, y2 = pt2
+
+        if thickness < 0:  # Filled
+            # Draw filled rounded rectangle
+            cv2.rectangle(img, (x1 + radius, y1), (x2 - radius, y2), color, -1)
+            cv2.rectangle(img, (x1, y1 + radius), (x2, y2 - radius), color, -1)
+            cv2.circle(img, (x1 + radius, y1 + radius), radius, color, -1)
+            cv2.circle(img, (x2 - radius, y1 + radius), radius, color, -1)
+            cv2.circle(img, (x1 + radius, y2 - radius), radius, color, -1)
+            cv2.circle(img, (x2 - radius, y2 - radius), radius, color, -1)
+        else:  # Outline only
+            cv2.line(img, (x1 + radius, y1), (x2 - radius, y1), color, thickness)
+            cv2.line(img, (x1 + radius, y2), (x2 - radius, y2), color, thickness)
+            cv2.line(img, (x1, y1 + radius), (x1, y2 - radius), color, thickness)
+            cv2.line(img, (x2, y1 + radius), (x2, y2 - radius), color, thickness)
+            cv2.ellipse(img, (x1 + radius, y1 + radius), (radius, radius), 180, 0, 90, color, thickness)
+            cv2.ellipse(img, (x2 - radius, y1 + radius), (radius, radius), 270, 0, 90, color, thickness)
+            cv2.ellipse(img, (x1 + radius, y2 - radius), (radius, radius), 90, 0, 90, color, thickness)
+            cv2.ellipse(img, (x2 - radius, y2 - radius), (radius, radius), 0, 0, 90, color, thickness)
+
+    def draw_modern_card(self, img, x, y, width, height, title, content, color_accent):
+        """
+        Draw a modern card UI element
+        """
+        # Card background with shadow
+        shadow_offset = 5
+        cv2.rectangle(img, (x + shadow_offset, y + shadow_offset),
+                      (x + width + shadow_offset, y + height + shadow_offset),
+                      (20, 20, 20), -1)
+
+        # Main card
+        self.draw_rounded_rect(img, (x, y), (x + width, y + height),
+                               self.color_dark, -1, self.card_radius)
+
+        # Accent line
+        cv2.rectangle(img, (x, y), (x + 5, y + height), color_accent, -1)
+
+        # Title
+        cv2.putText(img, title, (x + 20, y + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, self.color_light, 2)
+
+        # Content
+        if isinstance(content, list):
+            for i, line in enumerate(content):
+                cv2.putText(img, line, (x + 20, y + 60 + i * 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, self.color_mid, 1)
+        else:
+            cv2.putText(img, content, (x + 20, y + 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, self.color_light, 2)
+
+    def draw_progress_bar(self, img, x, y, width, height, progress, color):
+        """
+        Draw a modern progress bar
+        """
+        # Background
+        self.draw_rounded_rect(img, (x, y), (x + width, y + height),
+                               (60, 60, 60), -1, height // 2)
+
+        # Progress
+        if progress > 0:
+            progress_width = int(width * progress)
+            self.draw_rounded_rect(img, (x, y), (x + progress_width, y + height),
+                                   color, -1, height // 2)
 
     def draw_angle_visualization(self, img, p1, p2, p3, angle, color):
         """
-        Draw angle visualization on the image
+        Draw modern angle visualization
         """
-        # Draw lines between points
-        cv2.line(img, p1, p2, color, 3)
-        cv2.line(img, p2, p3, color, 3)
+        # Thicker, smoother lines
+        cv2.line(img, p1, p2, color, 4)
+        cv2.line(img, p2, p3, color, 4)
 
-        # Draw joint points as circles
-        cv2.circle(img, p1, 8, color, -1)  # Hip
-        cv2.circle(img, p2, 10, color, -1)  # Knee (larger)
-        cv2.circle(img, p3, 8, color, -1)  # Ankle
+        # Modern joint visualization
+        for point, size in [(p1, 10), (p2, 14), (p3, 10)]:
+            # Outer circle
+            cv2.circle(img, point, size, color, -1)
+            # Inner circle for depth
+            cv2.circle(img, point, size - 4, self.color_dark, -1)
 
-        # Display angle at knee (using 'deg' instead of degree symbol)
-        cv2.putText(img, f"{int(angle)} deg",
-                    (p2[0] - 40, p2[1] - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+        # Angle arc
+        angle_rad = np.radians(angle)
+        arc_radius = 50
+        start_angle = np.degrees(np.arctan2(p1[1] - p2[1], p1[0] - p2[0]))
+        end_angle = np.degrees(np.arctan2(p3[1] - p2[1], p3[0] - p2[0]))
 
-    def draw_timer_overlay(self, img, remaining_time, message):
+        cv2.ellipse(img, p2, (arc_radius, arc_radius), 0,
+                    min(start_angle, end_angle), max(start_angle, end_angle),
+                    color, 2)
+
+        # Angle text with background
+        angle_text = f"{int(angle)}"
+        text_size = cv2.getTextSize(angle_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+        text_x = p2[0] - text_size[0] // 2
+        text_y = p2[1] - 30
+
+        # Text background
+        padding = 8
+        self.draw_rounded_rect(img,
+                               (text_x - padding, text_y - text_size[1] - padding),
+                               (text_x + text_size[0] + padding, text_y + padding),
+                               self.color_dark, -1, 5)
+
+        # Angle text
+        cv2.putText(img, angle_text, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+
+    def draw_mini_graph(self, img, x, y, width, height, data, color):
         """
-        Draw countdown timer overlay
+        Draw a mini line graph of angle history
         """
+        if len(data) < 2:
+            return
+
+        # Background
+        self.draw_rounded_rect(img, (x, y), (x + width, y + height),
+                               (50, 50, 50), -1, 10)
+
+        # Grid lines
+        for i in range(1, 4):
+            grid_y = y + int(height * i / 4)
+            cv2.line(img, (x + 10, grid_y), (x + width - 10, grid_y),
+                     (80, 80, 80), 1)
+
+        # Data points
+        min_val = min(data)
+        max_val = max(data)
+        range_val = max_val - min_val if max_val - min_val > 0 else 1
+
+        points = []
+        for i, value in enumerate(data):
+            px = x + 10 + int((width - 20) * i / (len(data) - 1))
+            py = y + height - 10 - int((height - 20) * (value - min_val) / range_val)
+            points.append((px, py))
+
+        # Draw line
+        for i in range(1, len(points)):
+            cv2.line(img, points[i - 1], points[i], color, 2)
+
+        # Draw optimal range
+        if min_val <= self.optimal_angle_max and max_val >= self.optimal_angle_min:
+            opt_y1 = y + height - 10 - int((height - 20) * (self.optimal_angle_max - min_val) / range_val)
+            opt_y2 = y + height - 10 - int((height - 20) * (self.optimal_angle_min - min_val) / range_val)
+            cv2.rectangle(img, (x + 10, opt_y1), (x + width - 10, opt_y2),
+                          self.color_success, 1)
+
+    def draw_countdown_overlay(self, img, remaining_time):
+        """
+        Draw modern countdown overlay
+        """
+        height, width = img.shape[:2]
+
         # Semi-transparent overlay
         overlay = img.copy()
-        cv2.rectangle(overlay, (0, 0), (img.shape[1], img.shape[0]), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.5, img, 0.5, 0, img)
+        cv2.rectangle(overlay, (0, 0), (width, height), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.7, img, 0.3, 0, img)
 
-        # Large countdown number
-        cv2.putText(img, str(int(remaining_time)),
-                    (img.shape[1] // 2 - 50, img.shape[0] // 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 5, self.color_neutral, 8)
+        # Circular progress
+        center = (width // 2, height // 2)
+        radius = 150
 
-        # Message
-        cv2.putText(img, message,
-                    (img.shape[1] // 2 - len(message) * 12, img.shape[0] // 2 + 80),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, self.color_neutral, 3)
+        # Background circle
+        cv2.circle(img, center, radius, (80, 80, 80), 8)
+
+        # Progress arc
+        progress = 1 - (remaining_time / self.countdown_duration)
+        end_angle = int(360 * progress)
+        cv2.ellipse(img, center, (radius, radius), -90, 0, end_angle,
+                    self.color_primary, 8)
+
+        # Countdown number
+        count_text = str(int(remaining_time + 1))
+        text_size = cv2.getTextSize(count_text, cv2.FONT_HERSHEY_SIMPLEX, 4, 4)[0]
+        text_x = center[0] - text_size[0] // 2
+        text_y = center[1] + text_size[1] // 2
+        cv2.putText(img, count_text, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 4, self.color_light, 4)
+
+        # Instruction text
+        instruction = "GET ON YOUR BIKE"
+        text_size = cv2.getTextSize(instruction, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)[0]
+        text_x = center[0] - text_size[0] // 2
+        text_y = center[1] + radius + 50
+        cv2.putText(img, instruction, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, self.color_light, 2)
+
+    def draw_measurement_progress(self, img, remaining_time):
+        """
+        Draw measurement progress bar
+        """
+        height, width = img.shape[:2]
+
+        # Progress bar at top
+        bar_height = 8
+        progress = 1 - (remaining_time / self.measurement_duration)
+
+        # Background
+        cv2.rectangle(img, (0, 0), (width, bar_height), self.color_dark, -1)
+
+        # Progress
+        cv2.rectangle(img, (0, 0), (int(width * progress), bar_height),
+                      self.color_primary, -1)
+
+        # Status text
+        status_text = f"MEASURING - {int(remaining_time + 1)}s"
+        text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+        text_x = width // 2 - text_size[0] // 2
+
+        # Text background
+        self.draw_rounded_rect(img, (text_x - 20, 20),
+                               (text_x + text_size[0] + 20, 60),
+                               self.color_dark, -1, 20)
+
+        cv2.putText(img, status_text, (text_x, 45),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, self.color_primary, 2)
+
+    def draw_modern_ui(self, img):
+        """
+        Draw the main modern UI
+        """
+        height, width = img.shape[:2]
+
+        # Header
+        header_height = 80
+        cv2.rectangle(img, (0, 0), (width, header_height), self.color_dark, -1)
+
+        # Logo/Title
+        cv2.putText(img, "BIKE FIT ANALYZER", (self.ui_margin, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, self.color_light, 2)
+
+        # Status indicator
+        status_color = self.color_mid
+        status_text = "READY"
+
+        if self.state == "measuring":
+            status_color = self.color_primary
+            status_text = "RECORDING"
+        elif self.state == "finished":
+            _, _, status_color = self.get_feedback(self.max_angle)
+            status_text = "COMPLETE"
+
+        status_x = width - 200
+        cv2.circle(img, (status_x, 40), 8, status_color, -1)
+        cv2.putText(img, status_text, (status_x + 20, 48),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, self.color_light, 2)
+
+        # Main data cards
+        if self.state in ["idle", "finished"]:
+            # Current angle card
+            self.draw_modern_card(img, self.ui_margin, 100, 200, 120,
+                                  "CURRENT ANGLE", f"{int(self.current_angle)}",
+                                  self.color_mid)
+
+            # Maximum angle card
+            if self.max_angle > 0:
+                _, feedback_short, feedback_color = self.get_feedback(self.max_angle)
+                self.draw_modern_card(img, self.ui_margin, 240, 200, 120,
+                                      "MAXIMUM ANGLE", f"{int(self.max_angle)}",
+                                      feedback_color)
+
+                # Feedback card
+                feedback_long, _, _ = self.get_feedback(self.max_angle)
+                self.draw_modern_card(img, self.ui_margin, 380, 200, 120,
+                                      "ACTION REQUIRED", feedback_long,
+                                      feedback_color)
+
+            # Mini graph
+            if len(self.angle_history) > 10:
+                self.draw_mini_graph(img, width - 250, 100, 220, 100,
+                                     self.angle_history[-50:], self.color_primary)
+
+        # Instructions at bottom
+        instruction_y = height - 30
+
+        if self.state == "idle":
+            instruction = "Press SPACE to start measurement"
+        elif self.state == "finished":
+            instruction = "Press SPACE for new measurement | Q to quit"
+        else:
+            instruction = ""
+
+        if instruction:
+            text_size = cv2.getTextSize(instruction, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)[0]
+            text_x = width // 2 - text_size[0] // 2
+            cv2.putText(img, instruction, (text_x, instruction_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, self.color_mid, 1)
 
     def run(self):
         """
         Main program loop
         """
         print("Bike Fit Analyzer started!")
-        print("Instructions:")
-        print("  1. Position your computer so you can see yourself sideways")
-        print("  2. Press SPACEBAR to start measurement")
-        print("  3. You have 5 seconds to get on your bike")
-        print("  4. Pedal for 5 seconds during measurement")
-        print("  'q' - Quit program")
-        print("-" * 60)
+        print("=" * 60)
+        print("INSTRUCTIONS:")
+        print("1. Position your computer so you can see yourself sideways")
+        print("2. Press SPACEBAR to start measurement")
+        print("3. You have 5 seconds to get on your bike")
+        print("4. Pedal for 5 seconds during measurement")
+        print("5. Press Q to quit")
+        print("=" * 60)
 
         while True:
             success, img = self.cap.read()
@@ -144,23 +408,33 @@ class BikeFitAnalyzer:
             # Mirror image for more natural display
             img = cv2.flip(img, 1)
 
+            # Apply slight blur for smoother appearance
+            img = cv2.bilateralFilter(img, 5, 50, 50)
+
             # State machine for measurement process
             current_time = time.time()
+
+            # Always draw modern UI (except during countdown)
+            if self.state != "countdown":
+                self.draw_modern_ui(img)
 
             if self.state == "countdown":
                 remaining = self.countdown_duration - (current_time - self.countdown_start)
                 if remaining > 0:
-                    self.draw_timer_overlay(img, remaining, "Get on your bike!")
+                    self.draw_countdown_overlay(img, remaining)
                 else:
                     # Start measurement
                     self.state = "measuring"
                     self.measurement_start = current_time
                     self.max_angle = 0  # Reset max angle
+                    self.angle_history = []  # Reset history
                     print("Measurement started - pedal now!")
 
             elif self.state == "measuring":
                 remaining = self.measurement_duration - (current_time - self.measurement_start)
                 if remaining > 0:
+                    self.draw_measurement_progress(img, remaining)
+
                     # During measurement - update max angle
                     # Detect pose
                     img = self.detector.findPose(img, draw=False)
@@ -175,6 +449,11 @@ class BikeFitAnalyzer:
 
                             # Calculate angle
                             self.current_angle = self.calculate_angle(hip, knee, ankle)
+                            self.angle_history.append(self.current_angle)
+
+                            # Keep only recent history
+                            if len(self.angle_history) > self.max_history_points:
+                                self.angle_history.pop(0)
 
                             # Update maximum angle during measurement
                             if self.current_angle > self.max_angle:
@@ -182,19 +461,14 @@ class BikeFitAnalyzer:
 
                             # Visualization during measurement
                             self.draw_angle_visualization(img, hip, knee, ankle,
-                                                          self.current_angle, self.color_neutral)
+                                                          self.current_angle, self.color_primary)
                         except IndexError:
                             pass
-
-                    # Show measurement progress
-                    cv2.putText(img, f"MEASURING... {int(remaining)}s",
-                                (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
-                                (0, 255, 255), 3)
                 else:
                     # Measurement finished
                     self.state = "finished"
                     print(f"Measurement complete! Maximum angle: {int(self.max_angle)} degrees")
-                    feedback_text, _ = self.get_feedback(self.max_angle)
+                    feedback_text, _, _ = self.get_feedback(self.max_angle)
                     print(f"Result: {feedback_text}")
 
             else:  # idle or finished states
@@ -212,75 +486,24 @@ class BikeFitAnalyzer:
                         # Calculate current angle (display only)
                         self.current_angle = self.calculate_angle(hip, knee, ankle)
 
+                        # Update history even in idle for graph
+                        if self.state == "idle":
+                            self.angle_history.append(self.current_angle)
+                            if len(self.angle_history) > self.max_history_points:
+                                self.angle_history.pop(0)
+
                         # Get color based on max angle (if we have one)
                         if self.state == "finished" and self.max_angle > 0:
-                            _, color = self.get_feedback(self.max_angle)
+                            _, _, color = self.get_feedback(self.max_angle)
                         else:
-                            color = self.color_neutral
+                            color = self.color_mid
 
                         # Visualization
                         self.draw_angle_visualization(img, hip, knee, ankle,
                                                       self.current_angle, color)
 
                     except IndexError:
-                        # If joints are not detected
-                        if self.state == "idle":
-                            cv2.putText(img, "Position yourself sideways and press SPACEBAR",
-                                        (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
-                                        (0, 0, 255), 2)
-                else:
-                    if self.state == "idle":
-                        cv2.putText(img, "No person detected - press SPACEBAR when ready",
-                                    (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
-                                    (0, 0, 255), 2)
-
-            # Info box (always visible)
-            if self.state in ["idle", "finished"]:
-                # Determine feedback and color
-                if self.max_angle > 0:
-                    feedback_text, color = self.get_feedback(self.max_angle)
-                else:
-                    feedback_text = "No measurement yet"
-                    color = self.color_neutral
-
-                # Draw info box
-                cv2.rectangle(img, (10, 10), (450, 170), (0, 0, 0), -1)
-                cv2.rectangle(img, (10, 10), (450, 170), color, 3)
-
-                # Text in info box
-                cv2.putText(img, f"Current angle: {int(self.current_angle)} deg",
-                            (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                            self.color_neutral, 2)
-
-                if self.state == "finished":
-                    cv2.putText(img, f"FINAL Maximum: {int(self.max_angle)} deg",
-                                (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
-                                color, 2)
-                else:
-                    cv2.putText(img, f"Maximum: {int(self.max_angle)} deg",
-                                (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                                self.color_neutral, 2)
-
-                cv2.putText(img, feedback_text,
-                            (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
-                            color, 2)
-
-                # Display optimal range
-                cv2.putText(img, f"Optimal: {self.optimal_angle_min}-{self.optimal_angle_max} deg",
-                            (20, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                            self.color_neutral, 1)
-
-                # State indicator
-                state_text = "MEASUREMENT COMPLETE" if self.state == "finished" else "Press SPACE to start"
-                cv2.putText(img, state_text,
-                            (20, 165), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                            self.color_neutral, 1)
-
-            # Help text at bottom
-            cv2.putText(img, "SPACE = Start measurement | 'q' = Quit",
-                        (10, img.shape[0] - 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                        self.color_neutral, 1)
+                        pass
 
             # Display image
             cv2.imshow("Bike Fit Analyzer", img)
@@ -311,12 +534,12 @@ if __name__ == "__main__":
         import cvzone
 
         print("All required libraries are installed.")
-        print("-" * 60)
+        print("=" * 60)
         print("NOTE FOR MACBOOK USERS:")
         print("If the camera doesn't work, please adjust")
         print("the 'camera_index' variable in __init__().")
         print("Common values: 0, 1, or 2")
-        print("-" * 60)
+        print("=" * 60)
     except ImportError as e:
         print("Error: Please install missing libraries:")
         print("pip install -r requirements.txt")
