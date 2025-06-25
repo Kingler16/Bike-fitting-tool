@@ -3,6 +3,7 @@ import numpy as np
 from cvzone.PoseModule import PoseDetector
 import math
 import time
+from collections import deque
 
 
 class BikeFitAnalyzer:
@@ -34,10 +35,11 @@ class BikeFitAnalyzer:
         self.detector = PoseDetector()
 
         # Variables for angle calculation
-        self.max_angle = 0
         self.current_angle = 0
-        self.angle_history = []  # Store angle history for graph
-        self.max_history_points = 150  # About 5 seconds at 30fps
+        self.max_angle = 0  # Maximum angle while pedaling
+
+        # Data collection for accuracy
+        self.measurements = deque(maxlen=10)  # Moving average window
 
         # Optimal angle range (can be adjusted)
         self.optimal_angle_min = 140
@@ -53,11 +55,13 @@ class BikeFitAnalyzer:
         self.color_mid = (180, 180, 180)  # Mid gray
 
         # Timer and measurement state variables
-        self.state = "idle"  # States: idle, countdown, measuring, finished
+        self.state = "instructions"  # States: instructions, idle, countdown, measuring, finished
         self.countdown_start = None
         self.measurement_start = None
-        self.countdown_duration = 5  # seconds
-        self.measurement_duration = 5  # seconds
+
+        # Duration settings
+        self.countdown_duration = 15  # seconds to get on bike
+        self.measurement_duration = 8  # seconds for measurement
 
         # UI Layout constants
         self.ui_margin = 30
@@ -93,6 +97,14 @@ class BikeFitAnalyzer:
             return "LOWER SADDLE", "Too High", self.color_danger
         else:
             return "OPTIMAL", "Perfect Height", self.color_success
+
+    def calculate_moving_average(self):
+        """
+        Calculate moving average of measurements
+        """
+        if len(self.measurements) > 0:
+            return np.mean(self.measurements)
+        return 0
 
     def draw_rounded_rect(self, img, pt1, pt2, color, thickness, radius):
         """
@@ -205,44 +217,81 @@ class BikeFitAnalyzer:
         cv2.putText(img, angle_text, (text_x, text_y),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-    def draw_mini_graph(self, img, x, y, width, height, data, color):
+    def draw_instructions_screen(self, img):
         """
-        Draw a mini line graph of angle history
+        Draw instructions overlay at program start
         """
-        if len(data) < 2:
-            return
+        height, width = img.shape[:2]
 
-        # Background
-        self.draw_rounded_rect(img, (x, y), (x + width, y + height),
-                               (50, 50, 50), -1, 10)
+        # Dark overlay
+        overlay = img.copy()
+        cv2.rectangle(overlay, (0, 0), (width, height), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.8, img, 0.2, 0, img)
 
-        # Grid lines
-        for i in range(1, 4):
-            grid_y = y + int(height * i / 4)
-            cv2.line(img, (x + 10, grid_y), (x + width - 10, grid_y),
-                     (80, 80, 80), 1)
+        # Main container
+        container_width = 700
+        container_height = 450
+        container_x = (width - container_width) // 2
+        container_y = (height - container_height) // 2
 
-        # Data points
-        min_val = min(data)
-        max_val = max(data)
-        range_val = max_val - min_val if max_val - min_val > 0 else 1
+        # Container background
+        self.draw_rounded_rect(img,
+                               (container_x, container_y),
+                               (container_x + container_width, container_y + container_height),
+                               self.color_dark, -1, 20)
 
-        points = []
-        for i, value in enumerate(data):
-            px = x + 10 + int((width - 20) * i / (len(data) - 1))
-            py = y + height - 10 - int((height - 20) * (value - min_val) / range_val)
-            points.append((px, py))
+        # Header
+        header_y = container_y + 50
+        cv2.putText(img, "BIKE FIT ANALYZER",
+                    (container_x + container_width // 2 - 150, header_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, self.color_primary, 3)
 
-        # Draw line
-        for i in range(1, len(points)):
-            cv2.line(img, points[i - 1], points[i], color, 2)
+        # Instructions
+        instructions = [
+            "MEASUREMENT PROCESS:",
+            "",
+            "1. Position yourself sideways to the camera",
+            "2. Press SPACE to start 10-second countdown",
+            "3. Mount your bike during countdown",
+            "4. Pedal normally for 5 seconds",
+            "5. System tracks your maximum knee angle",
+            "6. View results and adjust saddle if needed",
+            "",
+            "TIPS:",
+            "- Ensure good lighting",
+            "- Wear fitted clothing",
+            "- Keep entire leg visible in frame",
+            "- Pedal at your normal cadence"
+        ]
 
-        # Draw optimal range
-        if min_val <= self.optimal_angle_max and max_val >= self.optimal_angle_min:
-            opt_y1 = y + height - 10 - int((height - 20) * (self.optimal_angle_max - min_val) / range_val)
-            opt_y2 = y + height - 10 - int((height - 20) * (self.optimal_angle_min - min_val) / range_val)
-            cv2.rectangle(img, (x + 10, opt_y1), (x + width - 10, opt_y2),
-                          self.color_success, 1)
+        start_y = header_y + 60
+        for i, instruction in enumerate(instructions):
+            if instruction == "":
+                continue
+            elif instruction.endswith(":"):
+                color = self.color_light
+                font_size = 0.8
+            else:
+                color = self.color_mid
+                font_size = 0.6
+
+            cv2.putText(img, instruction,
+                        (container_x + 50, start_y + i * 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, font_size, color, 1)
+
+        # Footer
+        footer_text = "Press SPACE to continue"
+        text_size = cv2.getTextSize(footer_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+        footer_x = container_x + (container_width - text_size[0]) // 2
+        footer_y = container_y + container_height - 30
+
+        # Pulsing effect for footer
+        pulse = int(128 + 127 * np.sin(time.time() * 3))
+        footer_color = (pulse, pulse, pulse)
+
+        cv2.putText(img, footer_text,
+                    (footer_x, footer_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, footer_color, 2)
 
     def draw_countdown_overlay(self, img, remaining_time):
         """
@@ -277,16 +326,16 @@ class BikeFitAnalyzer:
                     cv2.FONT_HERSHEY_SIMPLEX, 4, self.color_light, 4)
 
         # Instruction text
-        instruction = "GET ON YOUR BIKE"
+        instruction = "Get on your bike and start pedalling"
         text_size = cv2.getTextSize(instruction, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)[0]
         text_x = center[0] - text_size[0] // 2
         text_y = center[1] + radius + 50
         cv2.putText(img, instruction, (text_x, text_y),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, self.color_light, 2)
 
-    def draw_measurement_progress(self, img, remaining_time):
+    def draw_measurement_overlay(self, img, remaining_time):
         """
-        Draw measurement progress bar
+        Draw measurement progress overlay
         """
         height, width = img.shape[:2]
 
@@ -302,7 +351,7 @@ class BikeFitAnalyzer:
                       self.color_primary, -1)
 
         # Status text
-        status_text = f"MEASURING - {int(remaining_time + 1)}s"
+        status_text = f"PEDAL NORMALLY - {int(remaining_time + 1)}s"
         text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
         text_x = width // 2 - text_size[0] // 2
 
@@ -351,29 +400,30 @@ class BikeFitAnalyzer:
                                   "CURRENT ANGLE", f"{int(self.current_angle)}",
                                   self.color_mid)
 
-            # Maximum angle card
+            # Maximum angle card (if measured)
             if self.max_angle > 0:
                 _, feedback_short, feedback_color = self.get_feedback(self.max_angle)
-                self.draw_modern_card(img, self.ui_margin, 240, 200, 120,
+                self.draw_modern_card(img, 250, 100, 200, 120,
                                       "MAXIMUM ANGLE", f"{int(self.max_angle)}",
                                       feedback_color)
 
                 # Feedback card
                 feedback_long, _, _ = self.get_feedback(self.max_angle)
-                self.draw_modern_card(img, self.ui_margin, 380, 200, 120,
+                self.draw_modern_card(img, 470, 100, 250, 120,
                                       "ACTION REQUIRED", feedback_long,
                                       feedback_color)
 
-            # Mini graph
-            if len(self.angle_history) > 10:
-                self.draw_mini_graph(img, width - 250, 100, 220, 100,
-                                     self.angle_history[-50:], self.color_primary)
+                # Optimal range card
+                optimal_text = f"{self.optimal_angle_min}-{self.optimal_angle_max} deg"
+                self.draw_modern_card(img, self.ui_margin, 240, 200, 120,
+                                      "OPTIMAL RANGE", optimal_text,
+                                      self.color_success)
 
         # Instructions at bottom
         instruction_y = height - 30
 
         if self.state == "idle":
-            instruction = "Press SPACE to start measurement"
+            instruction = "Press SPACE to start measurement | Q to quit"
         elif self.state == "finished":
             instruction = "Press SPACE for new measurement | Q to quit"
         else:
@@ -391,12 +441,8 @@ class BikeFitAnalyzer:
         """
         print("Bike Fit Analyzer started!")
         print("=" * 60)
-        print("INSTRUCTIONS:")
-        print("1. Position your computer so you can see yourself sideways")
-        print("2. Press SPACEBAR to start measurement")
-        print("3. You have 5 seconds to get on your bike")
-        print("4. Pedal for 5 seconds during measurement")
-        print("5. Press Q to quit")
+        print("Loading camera and pose detection...")
+        print("Instructions will appear on screen.")
         print("=" * 60)
 
         while True:
@@ -414,10 +460,15 @@ class BikeFitAnalyzer:
             # State machine for measurement process
             current_time = time.time()
 
-            # Always draw modern UI (except during countdown)
-            if self.state != "countdown":
+            # Instructions screen
+            if self.state == "instructions":
+                self.draw_instructions_screen(img)
+
+            # Always draw modern UI (except during countdown and instructions)
+            elif self.state != "countdown":
                 self.draw_modern_ui(img)
 
+            # State handling
             if self.state == "countdown":
                 remaining = self.countdown_duration - (current_time - self.countdown_start)
                 if remaining > 0:
@@ -426,17 +477,16 @@ class BikeFitAnalyzer:
                     # Start measurement
                     self.state = "measuring"
                     self.measurement_start = current_time
-                    self.max_angle = 0  # Reset max angle
-                    self.angle_history = []  # Reset history
-                    print("Measurement started - pedal now!")
+                    self.measurements.clear()
+                    self.max_angle = 0
+                    print("Start pedaling!")
 
             elif self.state == "measuring":
                 remaining = self.measurement_duration - (current_time - self.measurement_start)
                 if remaining > 0:
-                    self.draw_measurement_progress(img, remaining)
+                    self.draw_measurement_overlay(img, remaining)
 
-                    # During measurement - update max angle
-                    # Detect pose
+                    # Detect pose and measure
                     img = self.detector.findPose(img, draw=False)
                     lmList, bboxInfo = self.detector.findPosition(img, draw=False)
 
@@ -448,31 +498,40 @@ class BikeFitAnalyzer:
                             ankle = (lmList[27][0], lmList[27][1])
 
                             # Calculate angle
-                            self.current_angle = self.calculate_angle(hip, knee, ankle)
-                            self.angle_history.append(self.current_angle)
+                            angle = self.calculate_angle(hip, knee, ankle)
+                            self.current_angle = angle
 
-                            # Keep only recent history
-                            if len(self.angle_history) > self.max_history_points:
-                                self.angle_history.pop(0)
+                            # Add to moving average
+                            self.measurements.append(angle)
 
-                            # Update maximum angle during measurement
-                            if self.current_angle > self.max_angle:
-                                self.max_angle = self.current_angle
+                            # Calculate moving average
+                            moving_avg = self.calculate_moving_average()
 
-                            # Visualization during measurement
+                            # Track maximum based on moving average
+                            if moving_avg > self.max_angle:
+                                self.max_angle = moving_avg
+
+                            # Visualization
                             self.draw_angle_visualization(img, hip, knee, ankle,
-                                                          self.current_angle, self.color_primary)
+                                                          angle, self.color_primary)
+
+                            # Show moving average
+                            cv2.putText(img, f"Moving Avg: {int(moving_avg)}",
+                                        (img.shape[1] - 200, img.shape[0] - 50),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                                        self.color_primary, 2)
                         except IndexError:
                             pass
                 else:
                     # Measurement finished
                     self.state = "finished"
-                    print(f"Measurement complete! Maximum angle: {int(self.max_angle)} degrees")
+                    print(f"Maximum angle: {int(self.max_angle)} degrees")
                     feedback_text, _, _ = self.get_feedback(self.max_angle)
                     print(f"Result: {feedback_text}")
+                    print("=" * 60)
 
             else:  # idle or finished states
-                # Normal pose detection (no angle updates in finished state)
+                # Normal pose detection
                 img = self.detector.findPose(img, draw=False)
                 lmList, bboxInfo = self.detector.findPosition(img, draw=False)
 
@@ -483,16 +542,10 @@ class BikeFitAnalyzer:
                         knee = (lmList[25][0], lmList[25][1])
                         ankle = (lmList[27][0], lmList[27][1])
 
-                        # Calculate current angle (display only)
+                        # Calculate current angle
                         self.current_angle = self.calculate_angle(hip, knee, ankle)
 
-                        # Update history even in idle for graph
-                        if self.state == "idle":
-                            self.angle_history.append(self.current_angle)
-                            if len(self.angle_history) > self.max_history_points:
-                                self.angle_history.pop(0)
-
-                        # Get color based on max angle (if we have one)
+                        # Get color based on state
                         if self.state == "finished" and self.max_angle > 0:
                             _, _, color = self.get_feedback(self.max_angle)
                         else:
@@ -514,11 +567,15 @@ class BikeFitAnalyzer:
                 print("Quitting program...")
                 break
             elif key == ord(' '):  # Spacebar
-                if self.state in ["idle", "finished"]:
+                if self.state == "instructions":
+                    # Move from instructions to idle
+                    self.state = "idle"
+                    print("\nReady to start measurement. Press SPACE again to begin.")
+                elif self.state in ["idle", "finished"]:
                     # Start countdown
                     self.state = "countdown"
                     self.countdown_start = current_time
-                    print("Starting countdown...")
+                    print("\nStarting new measurement...")
 
         # Release resources
         self.cap.release()

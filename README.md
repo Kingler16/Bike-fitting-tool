@@ -76,11 +76,13 @@ python bike_fit_analyzer.py
 
 ### Measurement Process
 
-The program follows this sequence:
+The program follows a two-phase measurement sequence:
 1. **Setup Phase**: Position yourself and your bike sideways to the camera
-2. **Countdown (5 seconds)**: Press SPACEBAR and mount your bike
-3. **Measurement (5 seconds)**: Pedal while the system tracks your maximum knee angle
-4. **Results**: Maximum angle is locked and feedback is displayed
+2. **Countdown (10 seconds)**: Press SPACEBAR and mount your bike
+3. **Static Measurement (3 seconds)**: Hold your lowest pedal position
+4. **Pause (3 seconds)**: Prepare to start pedaling
+5. **Dynamic Measurement (5 seconds)**: Pedal normally while system tracks maximum angle
+6. **Results**: Both static and dynamic angles displayed with analysis
 
 ### Keyboard Commands
 
@@ -96,10 +98,17 @@ The program follows this sequence:
 ### Display Information
 
 During operation, the program shows:
-- **Current angle**: Real-time knee angle (display only after measurement)
-- **Maximum angle**: Highest angle recorded during measurement phase
+- **Current angle**: Real-time knee angle
+- **Maximum angle**: Highest angle recorded during pedaling (with moving average filter)
+- **Optimal range**: Target angle range for proper saddle height
 - **Feedback**: Clear instructions based on your maximum angle
 - **State indicator**: Current phase of measurement process
+
+### Accuracy Features
+
+- **Moving average filter**: 10-sample window smooths measurements and eliminates outliers
+- **Real-time tracking**: Continuously updates maximum angle during measurement
+- **Visual feedback**: Color-coded results for instant understanding
 
 ## Scientific Background
 
@@ -115,6 +124,14 @@ The 5-second measurement window ensures:
 - True maximum extension is recorded (not just a momentary position)
 - Consistent results across different cadences
 - Eliminates variability from single-point measurements
+
+### Measurement Approach
+
+The system provides:
+- **Continuous tracking**: Monitors knee angle throughout pedaling motion
+- **Maximum detection**: Captures true extension during active pedaling
+- **Enhanced accuracy**: Moving average filtering removes measurement noise and outliers
+- **Real-time feedback**: See your current angle while pedaling
 
 ## Troubleshooting
 
